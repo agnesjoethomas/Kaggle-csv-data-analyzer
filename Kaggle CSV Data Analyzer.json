@@ -1,0 +1,120 @@
+{
+  "name": "Kaggle CSV Data Analyzer",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "Data Summarized",
+        "options": {}
+      },
+      "id": "bfa1fda7-1bf7-44b2-8bd1-d1dfd352cded",
+      "name": "Show Report",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        208
+      ],
+      "webhookId": "d4e2a6f1-9b3c-4a8e-8f2d-1c5b7e9a3d64"
+    },
+    {
+      "parameters": {
+        "formTitle": "CSV Data Analyzer",
+        "formDescription": "Upload a CSV file to generate a basic data analysis report.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "data",
+              "fieldType": "file",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "059a66c2-b9ae-4490-8a87-96d3c0260110",
+      "name": "Upload CSV1",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        432,
+        208
+      ],
+      "webhookId": "0e51bbdf-22f2-4ac0-a722-c418eec10f6d"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "008d0fdb-2f22-4d46-a22d-240a7a3ab063",
+      "name": "Read CSV1",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        736,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst rows = items.map(item => item.json);\n\nif (rows.length === 0) {\n  return [{ json: { report: 'No data found in the CSV file.' } }];\n}\n\nconst columns = Object.keys(rows[0]);\nconst totalRows = rows.length;\nconst totalColumns = columns.length;\n\nconst missingValues = {};\n\nfor (const column of columns) {\n  missingValues[column] = rows.filter(row =>\n    row[column] === null ||\n    row[column] === undefined ||\n    String(row[column]).trim() === ''\n  ).length;\n}\n\nconst duplicateRows = totalRows - new Set(\n  rows.map(row => JSON.stringify(row))\n).size;\n\n// Helper function to calculate percentiles (Q1, Median, Q3)\nfunction getPercentile(sortedArr, p) {\n  if (sortedArr.length === 0) return 0;\n  const index = (sortedArr.length - 1) * p;\n  const lower = Math.floor(index);\n  const upper = lower + 1;\n  const weight = index - lower;\n  if (upper >= sortedArr.length) return sortedArr[lower];\n  return sortedArr[lower] * (1 - weight) + sortedArr[upper] * weight;\n}\n\n// Helper function to calculate mode\nfunction getMode(arr) {\n  const freq = {};\n  let maxFreq = 0;\n  for (const val of arr) {\n    freq[val] = (freq[val] || 0) + 1;\n    if (freq[val] > maxFreq) {\n      maxFreq = freq[val];\n    }\n  }\n  const modes = Object.keys(freq)\n    .filter(key => freq[key] === maxFreq)\n    .map(Number);\n\n  if (modes.length === arr.length && arr.length > 1) {\n    return 'No unique mode';\n  }\n  return modes.join(', ');\n}\n\nconst numericalStatistics = {};\n\nfor (const column of columns) {\n  const nonEmptyValues = rows\n    .map(row => row[column])\n    .filter(value => value !== null && value !== undefined && String(value).trim() !== '');\n\n  const numericValues = nonEmptyValues\n    .map(value => Number(value))\n    .filter(value => !isNaN(value));\n\n  // Treat as numerical column if >= 90% of non-empty values are numeric\n  const isNumericalColumn =\n    nonEmptyValues.length > 0 &&\n    numericValues.length / nonEmptyValues.length >= 0.9;\n\n  if (isNumericalColumn) {\n    const sorted = [...numericValues].sort((a, b) => a - b);\n    \n    const count = sorted.length;\n    const uniqueCount = new Set(sorted).size;\n    const sum = sorted.reduce((a, b) => a + b, 0);\n    const mean = sum / count;\n    const min = sorted[0];\n    const max = sorted[sorted.length - 1];\n    \n    const q1 = getPercentile(sorted, 0.25);\n    const median = getPercentile(sorted, 0.50);\n    const q3 = getPercentile(sorted, 0.75);\n    const iqr = q3 - q1;\n    const mode = getMode(sorted);\n\n    numericalStatistics[column] = {\n      count: count,\n      unique: uniqueCount,\n      mean: Number(mean.toFixed(2)),\n      mode: mode,\n      minimum: min,\n      q1: Number(q1.toFixed(2)),\n      median: Number(median.toFixed(2)),\n      q3: Number(q3.toFixed(2)),\n      iqr: Number(iqr.toFixed(2)),\n      maximum: max\n    };\n  }\n}\n\nlet report = `CSV DATA ANALYSIS REPORT\\n\\n`;\nreport += `Total Rows: ${totalRows}\\n`;\nreport += `Total Columns: ${totalColumns}\\n\\n`;\n\nreport += `COLUMNS:\\n`;\nreport += columns.join(', ') + '\\n\\n';\n\nreport += `MISSING VALUES:\\n`;\nfor (const column of columns) {\n  report += `${column}: ${missingValues[column]}\\n`;\n}\n\nreport += `\\nDUPLICATE ROWS: ${duplicateRows}\\n\\n`;\n\nreport += `NUMERICAL STATISTICS:\\n`;\n\nif (Object.keys(numericalStatistics).length === 0) {\n  report += 'No numerical columns detected.\\n';\n} else {\n  for (const column of Object.keys(numericalStatistics)) {\n    const stat = numericalStatistics[column];\n    report += `\\n--- ${column} ---\\n`;\n    report += `Count: ${stat.count}\\n`;\n    report += `Unique Values: ${stat.unique}\\n`;\n    report += `Mean: ${stat.mean}\\n`;\n    report += `Mode: ${stat.mode}\\n`;\n    report += `Minimum: ${stat.minimum}\\n`;\n    report += `Q1 (25%): ${stat.q1}\\n`;\n    report += `Median (50%): ${stat.median}\\n`;\n    report += `Q3 (75%): ${stat.q3}\\n`;\n    report += `IQR: ${stat.iqr}\\n`;\n    report += `Maximum: ${stat.maximum}\\n`;\n  }\n}\n\nreturn [{\n  json: {\n    total_rows: totalRows,\n    total_columns: totalColumns,\n    columns: columns,\n    missing_values: missingValues,\n    duplicate_rows: duplicateRows,\n    numerical_statistics: numericalStatistics,\n    report: report\n  }\n}];"
+      },
+      "id": "955eddd5-c522-4c02-84ac-36c1e9a6f912",
+      "name": "Analyze Data1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        208
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Upload CSV1": {
+      "main": [
+        [
+          {
+            "node": "Read CSV1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read CSV1": {
+      "main": [
+        [
+          {
+            "node": "Analyze Data1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Data1": {
+      "main": [
+        [
+          {
+            "node": "Show Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "5ea4704c-9f15-42a2-be1d-99d3aac22bd3",
+  "meta": {
+    "instanceId": "b78255aba73ec8f4cc2592ff46fc8b4bebbea1ea0ebd82128ce4bf4aa603e7fa"
+  },
+  "nodeGroups": [],
+  "id": "hQJKpJGqzShQhLBR",
+  "tags": []
+}
